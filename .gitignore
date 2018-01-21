@@ -1,3 +1,8 @@
+# Files created by this script:
+tours.html
+tours.csv
+
+### GitHub default Python .gitignore ###
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -99,3 +104,4 @@ ENV/
 
 # mypy
 .mypy_cache/
+
