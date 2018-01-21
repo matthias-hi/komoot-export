@@ -1,0 +1,4 @@
+name: pykomoot-env
+dependencies:
+    - python=3
+    - requests
