@@ -10,6 +10,7 @@ The tour overview page (tours.html) is stored in the current directory.
 import argparse
 import getpass
 import os
+import sys
 
 import requests
 
@@ -33,51 +34,58 @@ def _save_response(response, file_name):
 
 class PyKomoot(object):
     """PyKomoot"""
-    def __init__(self, email, password):
-        """Login to komoot.de and get tour data.
-
-        :param email: Login email adress.
-        :param password: Login password.
-        """
-        self.email = email
+    def __init__(self):
+        self.email = None
         self.session = requests.Session()
         self.username = None  # actually user ID as obtained from Komoot
         self.response_tours = None  # requests response of tour overview page
-        self.tours = {'recorded': [], 'planned': []}
+
+    def login(self, email, password):
+        """Login to komoot.de and get username (ID).
+
+        :param email: Login email address.
+        :param password: Login password.
+        """
         # login
+        self.email = email
         session = self.session
-        response = session.get(_URLS['user_exists'].format(email=email))
+        response = session.get(_URLS['user_exists'].format(email=self.email))
         response.raise_for_status()
-        response = session.post(_URLS['login'], data={'username': email, 'password': password})
+        response = session.post(_URLS['login'], data={'username': self.email, 'password': password})
         response.raise_for_status()
         # get username (user ID) from komoot
         response = session.get(_URLS['login'])
         self.username = response.json()['username']
-        # get tour overview page
+
+    def get_tour_overview(self):
+        """Download tour overview page and create KomootTours object.
+
+        :returns: Instance of KomootTours
+        """
+        self.response_tours = None
+        session = self.session
         response = session.get(_URLS['tours'].format(username=self.username))
         response.raise_for_status()
         self.response_tours = response
-        ktours = KomootTours(response.text)
-        self.tours['planned'] = [t for t in ktours.json_data['tours'] if t['type'] == 'planned']
-        self.tours['recorded'] = [t for t in ktours.json_data['tours'] if t['type'] == 'recorded']
+        return KomootTours(response.text)
 
     def __str__(self):
         ret = []
-        ret.append('User:           {} ({})'.format(self.email, self.username))
-        ret.append('Tours planned:  {}'.format(len(self.tours['planned'])))
-        # get total distance
-        distances = (float(t['distance']) for t in self.tours['recorded'])
-        ret.append('Tours recorded: {} (total distance: {:.0f} km)'.format(len(self.tours['recorded']), sum(distances) / 1000))
+        if self.username:
+            ret.append('User:           {} ({})'.format(self.email, self.username))
+        else:
+            ret.append('User:           Not logged in.')
         return '\n'.join(ret)
 
     def download_tour(self, tourname):
-        """Download one tour and return text response.
+        """Download one tour and return as requests response.
 
         :param tourname: ID of tour to download.
         :returns: GPX file as text (type: str)
         """
         response = self.session.get(_URLS['download'].format(tourname=str(tourname)))
-        return response.text
+        response.raise_for_status()
+        return response
 
     def __del__(self):
         self.session.close()
@@ -95,29 +103,48 @@ def main():
         password = args.password
     else:
         password = getpass.getpass(prompt='Komoot password: ')
-    tour_type = 'planned' if args.planned else 'recorded'
     download_dir = args.planned if args.planned else args.recorded
-    komoot = PyKomoot(args.email, password)
+    komoot = PyKomoot()
+    ktours = None
+    try:
+        komoot.login(args.email, password)
+    except requests.exceptions.HTTPError:
+        print('Failed to log in to komoot.de. Check given mail and password.')
+        sys.exit(1)
+    try:
+        ktours = komoot.get_tour_overview()
+    except requests.exceptions.HTTPError:
+        print('Failed to download komoot tour overview page.')
+        sys.exit(1)
+    finally:
+        # If we successfuly got a tour overview page save it in any case.
+        if komoot.response_tours:
+            _save_response(komoot.response_tours, 'tours.html')
+            print('Saved tour overview page to "tours.html"')
+    print('')
     print(komoot)
-    if komoot.response_tours:
-        _save_response(komoot.response_tours, 'tours.html')
-        print('Saved tour overview page to "tours.html"')
+    print(ktours)
     if download_dir:
+        print('Downloading GPX files:')
         os.makedirs(download_dir, exist_ok=True)
         files_skipped = 0
-        for tour in komoot.tours[tour_type]:
+        tours = ktours.planned if args.planned else ktours.recorded
+        for tour in tours:
             tourname = tour['id']
             tourdate = tour['recordedAt'].split()[0]  # get date from string '2016-12-17 13:08:39 +0000'
             out_file_path = os.path.join(download_dir, '{}_{}.gpx'.format(tourdate, tourname))
             if os.path.exists(out_file_path):
                 files_skipped += 1
                 continue
-            gpx = komoot.download_tour(tourname)
-            with open(out_file_path, 'w') as out_file:
-                out_file.write(gpx)
+            try:
+                response_gpx = komoot.download_tour(tourname)
+            except requests.exceptions.HTTPError:
+                print('  Failed to download: ', out_file_path)
+                continue
+            _save_response(response_gpx, out_file_path)
             print('  ', out_file_path)
         if files_skipped:
-            print('Skipped downloading of {} files'.format(files_skipped))
+            print('Skipped downloading of {} files which are already present.'.format(files_skipped))
 
 
 if __name__ == '__main__':
