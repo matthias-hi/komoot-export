@@ -5,13 +5,14 @@ The directory will be created if does not exist. The name of the gpx files
 follows the scheme <date>_<tour_id>.gpx. Tours which are already present
 in the given directory are not downloaded again.
 
-The tour overview page (tours.html) is stored in the current directory.
+The tour overview raw json data is stored in the current directory (tours.json).
 """
 import argparse
 import getpass
 import os
 import sys
 
+import json
 import requests
 
 from pykomoot_tours import KomootTours
@@ -21,7 +22,7 @@ _URLS = {
     'login': 'https://www.komoot.de/webapi/v006/auth/cookie',
     'private': 'https://www.komoot.de/api/v006/users/{username}/private',
     'profile': 'https://www.komoot.de/api/v006/users/{username}/private/profile',
-    'tours': 'https://www.komoot.de/user/{username}/tours',
+    'tours': 'https://www.komoot.de/api/v007/users/{username}/tours/',  # parameters: sport_types=&type=&name=&status=&hl=&page=0&limit=
     'download': 'https://www.komoot.de/tour/{tourname}/download',
 }
 
@@ -32,13 +33,19 @@ def _save_response(response, file_name):
         file.write(response.content)
 
 
+def _save_text(text, file_name):
+    """Save text to file."""
+    with open(file_name, 'w') as file:
+        file.write(text)
+
+
 class PyKomoot(object):
     """PyKomoot"""
     def __init__(self):
         self.email = None
         self.session = requests.Session()
         self.username = None  # actually user ID as obtained from Komoot
-        self.response_tours = None  # requests response of tour overview page
+        self.tours_json = None  # json raw data of Komoot tours
 
     def login(self, email, password):
         """Login to komoot.de and get username (ID).
@@ -62,12 +69,20 @@ class PyKomoot(object):
 
         :returns: Instance of KomootTours
         """
-        self.response_tours = None
+        self.tours_json = None
         session = self.session
-        response = session.get(_URLS['tours'].format(username=self.username))
-        response.raise_for_status()
-        self.response_tours = response
-        return KomootTours(response.text)
+        json_data_list = []
+        for page in range(100):
+            response = session.get(_URLS['tours'].format(username=self.username), params={'page': page, 'limit': 100})
+            try:
+                response.raise_for_status()
+            except requests.exceptions.HTTPError:
+                # no more pages with data
+                break
+            json_data_list.append(json.loads(response.text))
+        if json_data_list:
+            self.tours_json = json.dumps(json_data_list)
+        return KomootTours(self.tours_json)
 
     def __str__(self):
         ret = []
@@ -118,9 +133,9 @@ def main():
         sys.exit(1)
     finally:
         # If we successfuly got a tour overview page save it in any case.
-        if komoot.response_tours:
-            _save_response(komoot.response_tours, 'tours.html')
-            print('Saved tour overview page to "tours.html"')
+        if komoot.tours_json:
+            _save_text(komoot.tours_json, 'tours.json')
+            print('Saved tour overview page to "tours.json"')
     print('')
     print(komoot)
     print(ktours)
@@ -131,7 +146,7 @@ def main():
         tours = ktours.planned if args.planned else ktours.recorded
         for tour in tours:
             tourname = tour['id']
-            tourdate = tour['recordedAt'].split()[0]  # get date from string '2016-12-17 13:08:39 +0000'
+            tourdate = tour['date'][:10]  # get date from string '2019-01-01T19:35:14.000Z'
             out_file_path = os.path.join(download_dir, '{}_{}.gpx'.format(tourdate, tourname))
             if os.path.exists(out_file_path):
                 files_skipped += 1

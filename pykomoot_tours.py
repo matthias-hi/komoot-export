@@ -1,76 +1,59 @@
 #!/usr/bin/env python
-"""Extract tour data from tour overview page and store as csv file.
+"""Extract tour data from raw json data and store as csv file.
 
-Use pykomoot_gpx.py to download tours overview page or download
-https://www.komoot.de/user/{username}/tours manually with your browser.
+Use pykomoot_gpx.py to download raw json data.
 """
 import argparse
 import json
-import re
 import csv
 from collections import defaultdict
 
 # This list contains fields (columns) which are omitted when
 # writing the csv file. Comment lines if you want to include them.
 EXCLUDE_FIELDS = [
-    '_converted',  # Seems to be always "True"
-    'altDiff',  # Seems to be always "0"
-    'compactpath',  # cryptic string
-    'constitution',  # integer number
-    'content',  # "{'hasImage': False}""
-    'creator',  # "{'username': 'xxxxxxxxxxx'}""
-    'difficulty',  # "{'grade': 'easy', 'titlekey': 'easy_touringbicycle', 'explanationFitness': 'db#t1', 'explanationTechnical': 'd#c1'}""
-    'mobile',  # "False"
-    'numComments',
-    'numLikes',
-    'path',  # "[]"
-    'poorQuality',  # "False"
-    'recordSource',  # e.g. "Android" or empty
-    'roundtrip',  # seems to be always "False"
-    'score',  # "0" or empty
-    'startpoint',  # "{'location': {'lat': xx.xxxxxx, 'lng': xx.xxxxxx, 'alt': xx.xxxxxx}}"
-    'summary',  # info about surfaces
-    'tags',  # e.g. "['!@sport/touringbicycle']"
-    'trackSourceDevice',  # e.g. s3://backend-geodata-eu-komootproduction/saved/xxxxxxxx_xxKHht.json
-    'usersetting',  # e.g. {'creator': 'xxxxxxxxxxx', 'status': 'PRIVATE', 'label': 'TODO'}
+    '_embedded',
+    '_links',
+    'constitution',
+    'difficulty',  # {'grade': 'moderate', 'explanation_technical': 'dm#t2', 'explanation_fitness': 'd#c2'}
+    'map_image',
+    'map_image_preview',
+    'path',
+    'query',
+    'segments',
+    'source',
+    'start_point',  # "{'location': {'lat': xx.xxxxxx, 'lng': xx.xxxxxx, 'alt': xx.xxxxxx}}"
+    'summary',
+    'tour_information',  # [{'type': 'OFF_GRID', 'segments': [{'from': 146, 'to': 159}, {'from': 193, 'to': 200}]}]
 ]
 
 
 class KomootTours(object):
     """KomootTours class"""
 
-    # Regular expression to match json data in tours overview page
-    TOURS_REGEX = r'kmtBoot.setProps\("(.*)"\)'
-
-    def __init__(self, tours_html):
+    def __init__(self, raw_json_str):
         """Parse json data and get all fields (columns).
 
-        :param tours_html: Tours overview html page (type: str).
+        :param raw_json_str: Tour overview json data as returned by komoot API (type: str).
         """
-        self.json_data = None
+        self.json_data = []
         self.all_fields = set()
-        match = re.search(self.TOURS_REGEX, tours_html)
-        if not match:
-            raise Exception('RegEx did not find tour data.')
-        # remove extra escape characters from strings
-        # e.g.:  \"string \\\"quoted string\\\" string continues\"
-        #  =>     "string \"quoted string\" string continues"
-        raw_data = match.group(1).replace(r'\"', r'"')
-        raw_data = raw_data.replace(r'\\', '\\')  # replace "\\" with "\"
-        self.json_data = json.loads(raw_data)
-        # Not all tours have the same fields. "recorded" and "planned"
+        list_json_data = json.loads(raw_json_str)
+        # print(json.dumps(self.json_data, indent=2, sort_keys=True))
+        for list_entry in list_json_data:
+            self.json_data += list_entry['_embedded']['tours']
+        # Not all tours have the same fields. "tour_recorded" and "tour_planned"
         # have different fields and some fields seem to have changed
         # over the years. Find them all:
-        for tour in self.json_data['tours']:
+        for tour in self.json_data:
             self.all_fields |= set(tour.keys())
 
     @property
     def planned(self):
-        return (t for t in self.json_data['tours'] if t['type'] == 'planned')
+        return (t for t in self.json_data if t['type'] == 'tour_planned')
 
     @property
     def recorded(self):
-        return (t for t in self.json_data['tours'] if t['type'] == 'recorded')
+        return (t for t in self.json_data if t['type'] == 'tour_recorded')
 
     def __str__(self):
         ret = []
@@ -95,26 +78,26 @@ class KomootTours(object):
             fields = self.all_fields - exclude_fields
             writer = csv.DictWriter(_f, dialect='excel', fieldnames=sorted(fields))
             writer.writeheader()
-            for tour in self.json_data['tours']:
+            for tour in self.json_data:
                 filtered_tour = {key: value for (key, value) in tour.items() if key in fields}
                 writer.writerow(defaultdict(lambda: '', filtered_tour))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('tours_html', help='Komoot tours html file')
+    parser.add_argument('tours_json', help='Komoot tours raw json file')
     args = parser.parse_args()
-    html_text = None
+    json_text = None
     try:
-        with open(args.tours_html) as html_file:
-            html_text = html_file.read()
+        with open(args.tours_json) as json_file:
+            json_text = json_file.read()
     except FileNotFoundError:
-        print('Could not open {}.'.format(args.tours_html))
-    if html_text:
-        ktours = KomootTours(html_text)
+        print('Could not open {}.'.format(args.tours_json))
+    if json_text:
+        ktours = KomootTours(json_text)
         print(ktours)
         ktours.to_csv('tours.csv', exclude_fields=EXCLUDE_FIELDS)
-        print('Converted {} to CSV file "tours.csv".'.format(args.tours_html))
+        print('Converted {} to CSV file "tours.csv".'.format(args.tours_json))
 
 
 if __name__ == '__main__':
