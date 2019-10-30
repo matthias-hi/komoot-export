@@ -2,6 +2,11 @@
 
 Export GPS tracks and tour data from komoot.de
 
+## Update 2019-10-30
+
+The login process has changed again and I could not get it working on the first couple of tries (see open issue). So at present the script is not functional.
+Since I mainly use Strava now for data keeping I will make no further attempts to fix this for the time being.
+
 ## Disclaimer
 
 This repository is in NO way affiliated to Komoot. It uses non-public APIs to extract user data and will cease to work as soon as their APIs change.
